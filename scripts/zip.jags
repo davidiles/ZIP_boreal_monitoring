@@ -1,0 +1,82 @@
+
+    model {
+      
+      # ----------------------------
+      # Count priors
+      # ----------------------------
+      
+      # Random PSU effects
+      PSU.sd ~ dunif(0,5)
+      PSU.tau <- pow(PSU.sd,-2)
+      for ( i in 1:nPSU ){ PSU.effect[i] ~ dnorm(0,PSU.tau) }
+      
+      # Log-scale coefficients
+      for ( i in 1:k.count ){ log.alpha[i] ~ dnorm(0,0.01) }
+      
+      # ----------------------------
+      # Zero inflation priors
+      # ----------------------------
+      beta[1] ~ dunif(0,1)
+      logit.beta[1] <- log( beta[1]/(1-beta[1]) )
+      for ( i in 2:k.zi ){ logit.beta[i] ~ dnorm(0,0.01) }
+      
+      # ----------------------------
+      # Likelihood
+      # ----------------------------
+      
+      # Site-level expected counts and 'occupancy' probabilities
+      log.mu   <- count.X %*% log.alpha # Omits PSU-level random effects
+      logit.p.z <- zi.X %*% logit.beta
+      
+      for ( j in 1:nSite ){
+        p.z[j] <- 1/( 1+exp(-logit.p.z[j]) )   # Probability of site being 'occupied'
+        z[j] ~ dbern( p.z[j] )
+        z.sim[j] ~ dbern (p.z[j])
+        }
+      
+      for ( i in 1:nObs ){
+        log( lambda[i] ) <- log.mu[site[i]] + offset[i] + PSU.effect[PSU[i]]
+        count[i] ~ dpois( lambda[i] * z[site[i]] )
+      }
+      
+      # ----------------------------
+      # Predictions for each data point (note that entire landscape predictions are done outside of mcmc engine)
+      # Also Posterior Predictive Check
+      # ----------------------------
+      for ( i in 1:nObs ){
+      
+        # Predictions / simulated data without lognormal correction
+        pred[i] <- exp( log.mu[site[i]] + offset[i]) * p.z[site[i]]
+        
+        # Predictions / simulated data with lognormal correction
+        pred.corrected[i] <- exp( log.mu[site[i]] + offset[i] + 0.5*PSU.sd*PSU.sd) * p.z[site[i]] # Including lognormal correction
+        
+      }
+      
+      # ----------------------------
+      # Posterior Predictive Checks
+      # ----------------------------
+      for (  i in 1:nObs ){
+      
+        sim.count[i] ~ dpois(exp( log.mu[site[i]] + offset[i]) * z.sim[site[i]])
+        sim.count.corrected[i] ~ dpois(exp( log.mu[site[i]] + offset[i] + 0.5 * PSU.sd * PSU.sd) * z.sim[site[i]]) # Including lognormal correction
+      
+        # Discrepancy measures for actual data
+        sqError[i] <- pow(count[i] - pred[i],2)
+        sqError.corrected[i] <- pow(count[i] - pred.corrected[i],2)
+        
+        # Discrepancy measures for simulated
+        sqError.sim[i] <- pow(sim.count[i] - pred[i],2)
+        sqError.corrected.sim[i] <- pow(sim.count.corrected[i] - pred.corrected[i],2)
+        
+      }
+      
+      SSE.observed <- sum(sqError[])
+      SSE.sim <- sum(sqError.sim[])
+      
+      SSE.corrected.observed <- sum(sqError.corrected[])
+      SSE.corrected.sim <- sum(sqError.corrected.sim[])
+      
+
+    }
+    
