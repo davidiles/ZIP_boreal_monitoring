@@ -12,7 +12,7 @@ lapply(my_packs, require, character.only = TRUE)
 rm(list=ls())
 
 theme_set(theme_bw())
-setwd("~/ECCC Monitoring/Boreal_SK/analysis/scripts")
+setwd("~/ECCC Monitoring/Boreal_SK/analysis/scripts") # MODIFY AS NEEDED
 
 #------------------------------------------------
 # Load BOSS data (used for sampling locations and covariate values)
@@ -33,7 +33,7 @@ for (i in 2:ncol(site_covar_Zstand)) site_covar_Zstand[,i] <- scale(site_covar_Z
 #------------------------------------------------
 # Create extent object
 #------------------------------------------------
-ex_raster <- raster("../data/AnnTemp.tif") # Example raster
+ex_raster <- raster("../data/AnnTemp.tif") # Example raster (used for extent of study area / projection info)
 
 # Create polygon from extent of covariate raster
 e <- extent(ex_raster)
@@ -69,7 +69,7 @@ for (focal.species in species.vector){
     mask(study_area)
   
   # Reproject species distribution raster to same crs/resolution as covariate map
-  sp_raster_latlon <- projectRaster(from = sp_raster,to = ex_raster, method = "bilinear")
+  sp_raster_reproject <- projectRaster(from = sp_raster,to = ex_raster, method = "bilinear")
   
   # ***************************************************************
   # ***************************************************************
@@ -81,6 +81,8 @@ for (focal.species in species.vector){
   count.model <- formula(site_year ~ st_std_nl + st_std_age + TREE + residual.closure) # site_year as response is just a placeholder
   zi.model <- formula(site_year ~ AnnTemp + I(AnnTemp^2) + CMI)                                       # site_year as response is just a placeholder
   
+  #**** NOTE: code will "break" if either model is set to "intercept only".  Need to fix this eventually.
+  
   #------------------------------------------------
   # Simulate counts at sampling locations
   #------------------------------------------------
@@ -91,7 +93,7 @@ for (focal.species in species.vector){
   projection(dat_sp) <- "+proj=longlat +datum=WGS84 +no_defs"
   
   # Extract density at each location
-  dat$density <- extract(sp_raster_latlon, dat_sp)
+  dat$density <- extract(sp_raster_reproject, dat_sp)
   
   # Generate simulated counts
   dat$expected <- dat$density*exp(log.offsets)
@@ -323,12 +325,12 @@ for (focal.species in species.vector){
   
   lambda_fit_raster <- rasterFromXYZ(cbind(covar_matrix[,1:2],lambda*water_mask), res = res(ex_raster), crs = crs(ex_raster))
   
-  bias_raster <- lambda_fit_raster - sp_raster_latlon
+  bias_raster <- lambda_fit_raster - sp_raster_reproject
   limit <- max(abs(values(bias_raster)),na.rm = TRUE)
   
   pdf(paste0("../output/simulation/",focal.species,"_",model.name,"_Cell_Bias.pdf"), width = 12, height = 5)
   par(mfrow=c(1,3))
-  plot(sp_raster_latlon * water_mask, col = viridis(10), colNA = "black", main = "True Density")
+  plot(sp_raster_reproject * water_mask, col = viridis(10), colNA = "black", main = "True Density")
   plot(lambda_fit_raster, col = viridis(10), colNA = "black", main = "Estimated Density (mean)")
   plot(bias_raster, col = colorRampPalette(c("red","white","blue"))(11), zlim = c(-limit,limit), main = "Bias",colNA = "black")
   par(mfrow=c(1,1))
@@ -337,7 +339,7 @@ for (focal.species in species.vector){
   #------------------------------------------------
   # Posterior estimate of total population size (takes ~ 1 hour to run)
   #------------------------------------------------
-  cell.area.ha <- 3.03 # Average area of each cell (needed to convert density to abundance)
+  cell.area.ha <- (res(sp_raster_reproject)[1] * res(sp_raster_reproject)[2])/10000 # Average area of each cell in ha (needed to convert density to abundance)
   
   # Iterate through mcmc samples and calculate total population size (can't create a single giant matrix of predictions because of RAM limitations)
   nu <- out$mcmc.info$n.samples # By default use all samples for prediction - could use fewer to speed up processing if desired
@@ -365,7 +367,7 @@ for (focal.species in species.vector){
   # Compare *actual* sum abundance to predicted sum abundance
   #------------------------------------------------
   
-  actual.sum <- sum(values(sp_raster_latlon),na.rm = TRUE) * cell.area.ha * water_mask
+  actual.sum <- sum(values(sp_raster_reproject),na.rm = TRUE) * cell.area.ha * water_mask
   
   # pdf(paste0("../output/simulation/",focal.species,"_",model.name,"_posterior_popsize.pdf"),width = 5,height = 4)
   # hist(popsize_mcmc, breaks = 50, main = paste0("Estimated Total Abundance:\n",mean.pop, "\n(",lcl.pop," to ",ucl.pop,")"),
@@ -445,7 +447,7 @@ for (focal.species in species.vector){
   #------------------------------------------------
   output_list <- list(focal.species = focal.species,
                       model.name = model.name,
-                      sp_raster_latlon = sp_raster_latlon,
+                      sp_raster_reproject = sp_raster_reproject,
                       cell.area.ha = cell.area.ha,
                       jags.data = jags.data,
                       out = out,
@@ -476,7 +478,7 @@ for (focal.species in names(sort(colSums(dat[,42:240]),decreasing = TRUE))){
   prop.Rhat.1.1 <- mean(unlist(output_list$out$Rhat)>1.1,na.rm = TRUE)
   Bayesian.p.value.corrected <- mean(output_list$out$sims.list$SSE.corrected.observed > output_list$out$sims.list$SSE.corrected.sim)
     
-  actual.sum <- sum(values(output_list$sp_raster_latlon * water_mask_raster),na.rm = TRUE) * cell.area.ha
+  actual.sum <- sum(values(output_list$sp_raster_reproject * water_mask_raster),na.rm = TRUE) * cell.area.ha
   
   
   species_results <- data.frame(Species = focal.species,
